@@ -1,0 +1,133 @@
+---
+title: "Red Tide Algal Blooms and Shark Locations in South Florida"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+library(tidyverse)
+
+# 1. Load shark survey sets (2009-2021) and reshape to long format by species
+sharks_set <- read_csv("SharksBySet.csv") |>
+  mutate(year = as.integer(str_sub(Sample, 1, 4))) |>
+  pivot_longer(
+    cols = Nurse:Spinner,
+    names_to = "Species",
+    values_to = "count"
+  ) |>
+  filter(count > 0)
+
+# 2. Load shark tag/recapture tracks and fill each shark's year across its waypoints
+shark_tracks <- read_csv("OriginalAndRecaptureLocations.csv") |>
+  mutate(year = year(mdy(Date))) |>
+  group_by(TagNumber) |>
+  fill(year, .direction = "downup") |>
+  ungroup()
+
+# 3. Load NOAA HABSOS Florida red tide data (2008-2021, bloom concentrations >10k cells/L)
+red_tide <- read_csv("0120767/8.8/data/0-data/habsos_20240430.csv") |>
+  mutate(year = year(ymd(SAMPLE_DATE))) |>
+  filter(
+    STATE_ID == "FL",
+    year >= 2008, year <= 2021,
+    CELLCOUNT > 10000,
+    LATITUDE >= 24.3, LATITUDE <= 30.0,
+    LONGITUDE >= -85.0, LONGITUDE <= -79.0
+  )
+
+fl_map <- map_data("state", region = "florida")
+```
+
+## Breakdown by Species (with Recapture Tracks)
+
+```{r}
+#| fig-width: 10
+#| fig-height: 6
+ggplot() +
+  geom_polygon(
+    data = fl_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey92", color = "grey65"
+  ) +
+  # Red tide blooms in the background across all panels
+  geom_point(
+    data = select(red_tide, -SPECIES),
+    aes(x = LONGITUDE, y = LATITUDE),
+    color = "#d95f02", alpha = 0.15, size = 0.8
+  ) +
+  # Survey capture points for each species
+  geom_point(
+    data = filter(sharks_set, Species %in% unique(shark_tracks$Species)),
+    aes(x = Longitude, y = Latitude),
+    color = "#1b9e77", alpha = 0.4, size = 1
+  ) +
+  # Recapture movement tracks from OriginalAndRecaptureLocations.csv
+  geom_path(
+    data = shark_tracks,
+    aes(x = Longitude, y = Latitude, group = TagNumber),
+    color = "#2b5c8f", linewidth = 0.7, alpha = 0.8
+  ) +
+  geom_point(
+    data = shark_tracks,
+    aes(x = Longitude, y = Latitude, shape = `Original/Recap` == "Original"),
+    color = "#2b5c8f", size = 1.5
+  ) +
+  coord_quickmap(xlim = c(-85.0, -79.0), ylim = c(24.3, 30.0)) +
+  facet_wrap(~ Species, ncol = 4) +
+  scale_shape_manual(
+    name = "Track Point",
+    values = c(`TRUE` = 16, `FALSE` = 17),
+    labels = c(`TRUE` = "Original Tagging", `FALSE` = "Waypoint / Recapture")
+  ) +
+  labs(
+    title = "Shark Recapture Tracks and Red Tide Blooms by Species",
+    subtitle = "Orange = Red tide blooms (>10k cells/L) | Green = Survey captures | Blue = Recapture tracks",
+    x = "Longitude",
+    y = "Latitude",
+    caption = "Sources: Tinari & Hammerschlag (2021); NOAA HABSOS (2024)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Breakdown by Year (2008–2021)
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+ggplot() +
+  geom_polygon(
+    data = fl_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey92", color = "grey65"
+  ) +
+  geom_point(
+    data = red_tide,
+    aes(x = LONGITUDE, y = LATITUDE),
+    color = "#d95f02", alpha = 0.25, size = 0.9
+  ) +
+  geom_point(
+    data = sharks_set,
+    aes(x = Longitude, y = Latitude),
+    color = "grey30", alpha = 0.3, size = 0.8
+  ) +
+  geom_path(
+    data = shark_tracks,
+    aes(x = Longitude, y = Latitude, group = TagNumber, color = Species),
+    linewidth = 0.8, alpha = 0.85
+  ) +
+  coord_quickmap(xlim = c(-85.0, -79.0), ylim = c(24.3, 30.0)) +
+  facet_wrap(~ year, ncol = 4) +
+  labs(
+    title = "Red Tide Blooms and Shark Recapture Tracks by Year (2008–2021)",
+    subtitle = "Orange dots = Red tide (>10k cells/L) | Grey dots = Survey captures | Colored lines = Recapture tracks",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Track Species"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
